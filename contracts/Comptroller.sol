@@ -12,7 +12,7 @@ import "./Governance/Comp.sol";
  * @title Compound's Comptroller Contract
  * @author Compound
  */
-contract Comptroller is ComptrollerV5Storage, ComptrollerInterface, ComptrollerErrorReporter, ExponentialNoError {
+contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerErrorReporter, ExponentialNoError {
     /// @notice Emitted when an admin supports a market
     event MarketListed(CToken cToken);
 
@@ -63,6 +63,9 @@ contract Comptroller is ComptrollerV5Storage, ComptrollerInterface, ComptrollerE
 
     /// @notice Emitted when COMP is granted by admin
     event CompGranted(address recipient, uint amount);
+
+    /// @notice Emitted when B.Protocol is changed
+    event NewBProtocol(address indexed cToken, address oldBProtocol, address newBProtocol);
 
     /// @notice The initial COMP index for a market
     uint224 public constant compInitialIndex = 1e36;
@@ -466,8 +469,6 @@ contract Comptroller is ComptrollerV5Storage, ComptrollerInterface, ComptrollerE
         address liquidator,
         address borrower,
         uint repayAmount) external returns (uint) {
-        // Shh - currently unused
-        liquidator;
 
         if (!markets[cTokenBorrowed].isListed || !markets[cTokenCollateral].isListed) {
             return uint(Error.MARKET_NOT_LISTED);
@@ -495,6 +496,13 @@ contract Comptroller is ComptrollerV5Storage, ComptrollerInterface, ComptrollerE
                 return uint(Error.TOO_MUCH_REPAY);
             }
         }
+
+        /* Only B.Protocol can liquidate */
+        address bLiquidator = bprotocol[address(cTokenBorrowed)];
+        if(bLiquidator != address(0) && IBProtocol(bLiquidator).canLiquidate(cTokenBorrowed, cTokenCollateral, repayAmount)) {
+            require(liquidator == bLiquidator, "only B.Protocol can liquidate");
+        }
+
         return uint(Error.NO_ERROR);
     }
 
@@ -1315,6 +1323,15 @@ contract Comptroller is ComptrollerV5Storage, ComptrollerInterface, ComptrollerE
         compContributorSpeeds[contributor] = compSpeed;
 
         emit ContributorCompSpeedUpdated(contributor, compSpeed);
+    }
+
+    function _setBProtocol(address cToken, address newBProtocol) public returns (uint) {
+        require(adminOrInitializing(), "only admin can set B.Protocol");
+
+        emit NewBProtocol(cToken, bprotocol[cToken], newBProtocol);
+        bprotocol[cToken] = newBProtocol;
+
+        return uint(Error.NO_ERROR);
     }
 
     /**

@@ -2,6 +2,7 @@ pragma solidity ^0.5.16;
 
 import "./CToken.sol";
 import "./PriceOracle.sol";
+import "./IBProtocol.sol";
 
 contract UnitrollerAdminStorage {
     /**
@@ -142,4 +143,9 @@ contract ComptrollerV5Storage is ComptrollerV4Storage {
 
     /// @notice Last block at which a contributor's COMP rewards have been allocated
     mapping(address => uint) public lastContributorBlock;
+}
+
+contract ComptrollerV6Storage is ComptrollerV5Storage {
+    /// @notice CToken => IBProtocol (per CToken debt)
+    mapping(address => address) public bprotocol;
 }
