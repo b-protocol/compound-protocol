@@ -12,7 +12,7 @@ import "./Governance/Comp.sol";
  * @title Compound's Comptroller Contract
  * @author Compound
  */
-contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerErrorReporter, ExponentialNoError {
+contract ComptrollerG7 is ComptrollerV5Storage, ComptrollerInterface, ComptrollerErrorReporter, ExponentialNoError {
     /// @notice Emitted when an admin supports a market
     event MarketListed(CToken cToken);
 
@@ -63,9 +63,6 @@ contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerE
 
     /// @notice Emitted when COMP is granted by admin
     event CompGranted(address recipient, uint amount);
-
-    /// @notice Emitted when B.Protocol is changed
-    event NewBProtocol(address indexed cToken, address oldBProtocol, address newBProtocol);
 
     /// @notice The initial COMP index for a market
     uint224 public constant compInitialIndex = 1e36;
@@ -469,38 +466,27 @@ contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerE
         address liquidator,
         address borrower,
         uint repayAmount) external returns (uint) {
+        // Shh - currently unused
+        liquidator;
 
         if (!markets[cTokenBorrowed].isListed || !markets[cTokenCollateral].isListed) {
             return uint(Error.MARKET_NOT_LISTED);
         }
 
-        uint borrowBalance = CToken(cTokenBorrowed).borrowBalanceStored(borrower);
-
-        /* allow accounts to be liquidated if the market is deprecated */
-        if (isDeprecated(CToken(cTokenBorrowed))) {
-            require(borrowBalance >= repayAmount, "Can not repay more than the total borrow");
-        } else {
-            /* The borrower must have shortfall in order to be liquidatable */
-            (Error err, , uint shortfall) = getAccountLiquidityInternal(borrower);
-            if (err != Error.NO_ERROR) {
-                return uint(err);
-            }
-
-            if (shortfall == 0) {
-                return uint(Error.INSUFFICIENT_SHORTFALL);
-            }
-
-            /* The liquidator may not repay more than what is allowed by the closeFactor */
-            uint maxClose = mul_ScalarTruncate(Exp({mantissa: closeFactorMantissa}), borrowBalance);
-            if (repayAmount > maxClose) {
-                return uint(Error.TOO_MUCH_REPAY);
-            }
+        /* The borrower must have shortfall in order to be liquidatable */
+        (Error err, , uint shortfall) = getAccountLiquidityInternal(borrower);
+        if (err != Error.NO_ERROR) {
+            return uint(err);
+        }
+        if (shortfall == 0) {
+            return uint(Error.INSUFFICIENT_SHORTFALL);
         }
 
-        /* Only B.Protocol can liquidate */
-        address bLiquidator = bprotocol[address(cTokenBorrowed)];
-        if(bLiquidator != address(0) && IBProtocol(bLiquidator).canLiquidate(cTokenBorrowed, cTokenCollateral, repayAmount)) {
-            require(liquidator == bLiquidator, "only B.Protocol can liquidate");
+        /* The liquidator may not repay more than what is allowed by the closeFactor */
+        uint borrowBalance = CToken(cTokenBorrowed).borrowBalanceStored(borrower);
+        uint maxClose = mul_ScalarTruncate(Exp({mantissa: closeFactorMantissa}), borrowBalance);
+        if (repayAmount > maxClose) {
+            return uint(Error.TOO_MUCH_REPAY);
         }
 
         return uint(Error.NO_ERROR);
@@ -1248,17 +1234,16 @@ contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerE
                 updateCompBorrowIndex(address(cToken), borrowIndex);
                 for (uint j = 0; j < holders.length; j++) {
                     distributeBorrowerComp(address(cToken), holders[j], borrowIndex);
+                    compAccrued[holders[j]] = grantCompInternal(holders[j], compAccrued[holders[j]]);
                 }
             }
             if (suppliers == true) {
                 updateCompSupplyIndex(address(cToken));
                 for (uint j = 0; j < holders.length; j++) {
                     distributeSupplierComp(address(cToken), holders[j]);
+                    compAccrued[holders[j]] = grantCompInternal(holders[j], compAccrued[holders[j]]);
                 }
             }
-        }
-        for (uint j = 0; j < holders.length; j++) {
-            compAccrued[holders[j]] = grantCompInternal(holders[j], compAccrued[holders[j]]);
         }
     }
 
@@ -1325,15 +1310,6 @@ contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerE
         emit ContributorCompSpeedUpdated(contributor, compSpeed);
     }
 
-    function _setBProtocol(address cToken, address newBProtocol) public returns (uint) {
-        require(adminOrInitializing(), "only admin can set B.Protocol");
-
-        emit NewBProtocol(cToken, bprotocol[cToken], newBProtocol);
-        bprotocol[cToken] = newBProtocol;
-
-        return uint(Error.NO_ERROR);
-    }
-
     /**
      * @notice Return all of the markets
      * @dev The automatic getter may be used to access an individual market.
@@ -1341,19 +1317,6 @@ contract Comptroller is ComptrollerV6Storage, ComptrollerInterface, ComptrollerE
      */
     function getAllMarkets() public view returns (CToken[] memory) {
         return allMarkets;
-    }
-
-    /**
-     * @notice Returns true if the given cToken market has been deprecated
-     * @dev All borrows in a deprecated cToken market can be immediately liquidated
-     * @param cToken The market to check if deprecated
-     */
-    function isDeprecated(CToken cToken) public view returns (bool) {
-        return
-            markets[address(cToken)].collateralFactorMantissa == 0 && 
-            borrowGuardianPaused[address(cToken)] == true && 
-            cToken.reserveFactorMantissa() == 1e18
-        ;
     }
 
     function getBlockNumber() public view returns (uint) {
